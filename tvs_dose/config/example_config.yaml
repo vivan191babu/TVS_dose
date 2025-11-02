@@ -1,0 +1,8 @@
+
+paths:
+  configs: "C:\Users\79063\Documents\00_MyPhD\38_PhD\6_tvs_doze\Configs"
+  mcu_fin: "C:\Users\79063\Documents\00_MyPhD\38_PhD\6_tvs_doze\MCU_FIN"
+  greens:  "C:\Users\79063\Documents\00_MyPhD\38_PhD\6_tvs_doze\TVS_Green"
+  origens: "C:\Users\79063\Documents\00_MyPhD\38_PhD\6_tvs_doze\Origens"
+  results: "C:\Users\79063\Documents\00_MyPhD\38_PhD\6_tvs_doze\Core_FAs"
+use_scale: false
