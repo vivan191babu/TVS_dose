@@ -86,31 +86,35 @@ class TestPlanAPI:
 
     # ——— режим без SCALE: парсим готовые .out ———
     def _parse_origen_without_scale(self, core, max_reg_hours: float) -> None:
-        """Имитируем InvokeOrigen, но не запускаем SCALE — читаем готовые *.out в Origens."""
+        # Восстанавливаем те же точки по времени, что и InvokeOrigen
         N_pts = 10
         precision = 1
         tmax_log = math.log(max_reg_hours)
         core.tregs = [round(math.exp(n / N_pts * tmax_log), precision) for n in range(1, N_pts + 1)]
         core.tregs = [0.0] + core.tregs
 
-        core.Wmax_src_spectrums = dict()
-        core.Wmax2_src_spectrums = dict()
-        core.Wenvelope_src_spectrums = dict()
+        # Контейнеры для спектров
+        core.Wmax_src_spectrums = {}
+        core.Wmax2_src_spectrums = {}
+        core.Wenvelope_src_spectrums = {}
 
         containers = [core.Wmax_src_spectrums, core.Wmax2_src_spectrums, core.Wenvelope_src_spectrums]
         try:
-            origen_fns = list(type(core).Origen_fns)  # ["max_burnup","max_2_hours","envelope"]
+            origen_fns = list(type(core).Origen_fns)   # ["max_burnup","max_2_hours","envelope"]
         except Exception:
             origen_fns = ["max_burnup", "max_2_hours", "envelope"]
 
+        # ВАЖНО: внутри ParseOrigenOut путь формируется как .\Origens\ + fn,
+        # поэтому сюда передаём ТОЛЬКО имя файла (basename), без директорий.
         for fn, container in zip(origen_fns, containers):
-            out_path = os.path.join(os.curdir, TestPlan.OrigenDIRName, fn + ".out")
-            if not os.path.isfile(out_path):
+            full = pathlib.Path(self.paths.origen_dir) / f"{fn}.out"
+            if not full.exists():
                 raise FileNotFoundError(
-                    f"Не найден файл ORIGEN: {out_path}. "
-                    "Положите готовые .out (или включите use_scale=True)."
+                    f"Не найден файл ORIGEN: {full}\n"
+                    f"Ожидался в папке: {self.paths.origen_dir}"
                 )
-            core.ParseOrigenOut(out_path, container)
+            core.ParseOrigenOut(f"{fn}.out", container)
+
 
     def compute_envelope(self, decay_hours: float, run_origen: bool = True) -> EnvelopeResult:
         if self._algorithms is None or self._greens is None:
