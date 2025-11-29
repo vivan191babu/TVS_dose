@@ -5,7 +5,7 @@ import importlib, logging, sys, os, pathlib, math
 
 log = logging.getLogger(__name__)
 
-# Добавляем корень проекта (где лежат Test_plan.py и FA_Gamma.py) в PYTHONPATH
+# Корень репозитория (где лежат Test_plan.py и FA_Gamma.py)
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -16,7 +16,7 @@ try:
 except Exception as e:
     raise ImportError(
         "Не найдены модули Test_plan.py / FA_Gamma.py. "
-        f"Положите их в папку: {ROOT}"
+        f"Положите их в корень репозитория: {ROOT}"
     ) from e
 
 
@@ -50,34 +50,26 @@ class TestPlanAPI:
         self._greens = None
 
     def _apply_paths(self) -> None:
-        """
-        Подменяем глобальные пути в исходных модулях на те,
-        что пришли снаружи (вместо захардкоженных констант).
-        """
+        """Подменяем глобальные пути в исходных модулях на переданные извне."""
         TestPlan.ConfigDIRName   = self.paths.config_dir
         TestPlan.MCUDIRName      = self.paths.mcu_fin_dir
         TestPlan.ResultsDIRName  = self.paths.results_dir
         TestPlan.OrigenDIRName   = self.paths.origen_dir
         TestPlan.scale_bin       = self.paths.scale_bin
 
-        # Папка функций Грина для FA_Gamma
+        # Папка функций Грина
         FAGamma.MCUGreenDirName  = self.paths.greens_dir
 
-        # Гарантируем наличие выходных папок
+        # Выходные папки — гарантируем наличие
         pathlib.Path(self.paths.results_dir).mkdir(parents=True, exist_ok=True)
         pathlib.Path(self.paths.origen_dir).mkdir(parents=True, exist_ok=True)
 
     def initialize(self) -> Dict:
-        """
-        Загружаем таблицы/алгоритмы и функции Грина.
-        Возвращаем краткую мета-информацию.
-        """
+        """Загрузка таблиц/алгоритмов и функций Грина. Возвращает мета-информацию."""
         self._apply_paths()
-        # ReadStaticData ожидает FINsListFile внутри Configs
         self._algorithms = TestPlan.ReadStaticData(TestPlan.FINsListFile)
         self._greens = FAGamma.readGreenFuncs()
 
-        # Соберём список ячеек из первого алгоритма (как ориентир)
         try:
             first_alg = next(iter(self._algorithms.values()))
             fa_cells = sorted(first_alg.FAs.keys())
@@ -92,44 +84,39 @@ class TestPlanAPI:
             "fa_spans": spans,
         }
 
+    # ——— режим без SCALE: парсим готовые .out ———
     def _parse_origen_without_scale(self, core, max_reg_hours: float) -> None:
-        """
-        Поведение как у InvokeOrigen, но без запуска SCALE:
-        просто читаем уже готовые *.out в Origens.
-        """
-        # Восстанавливаем те же временные точки, что и в InvokeOrigen
+        # Восстанавливаем те же точки по времени, что и InvokeOrigen
         N_pts = 10
         precision = 1
         tmax_log = math.log(max_reg_hours)
         core.tregs = [round(math.exp(n / N_pts * tmax_log), precision) for n in range(1, N_pts + 1)]
         core.tregs = [0.0] + core.tregs
 
-        # Контейнеры, которые далее использует FADoseRate / FACellDoseRate
-        core.Wmax_src_spectrums = dict()
-        core.Wmax2_src_spectrums = dict()
-        core.Wenvelope_src_spectrums = dict()
+        # Контейнеры для спектров
+        core.Wmax_src_spectrums = {}
+        core.Wmax2_src_spectrums = {}
+        core.Wenvelope_src_spectrums = {}
 
         containers = [core.Wmax_src_spectrums, core.Wmax2_src_spectrums, core.Wenvelope_src_spectrums]
-        # Список базовых имён файлов ORIGEN берём из класса (как в Test_plan)
         try:
-            origen_fns = list(type(core).Origen_fns)
+            origen_fns = list(type(core).Origen_fns)   # ["max_burnup","max_2_hours","envelope"]
         except Exception:
-            # На случай, если имя атрибута изменится — дефолт
             origen_fns = ["max_burnup", "max_2_hours", "envelope"]
 
+        # ВАЖНО: внутри ParseOrigenOut путь формируется как .\Origens\ + fn,
+        # поэтому сюда передаём ТОЛЬКО имя файла (basename), без директорий.
         for fn, container in zip(origen_fns, containers):
-            out_path = os.path.join(os.curdir, TestPlan.OrigenDIRName, fn + ".out")
-            if not os.path.isfile(out_path):
+            full = pathlib.Path(self.paths.origen_dir) / f"{fn}.out"
+            if not full.exists():
                 raise FileNotFoundError(
-                    f"Не найден файл ORIGEN: {out_path}. "
-                    "Положите готовые .out (или включите use_scale=True)."
+                    f"Не найден файл ORIGEN: {full}\n"
+                    f"Ожидался в папке: {self.paths.origen_dir}"
                 )
-            core.ParseOrigenOut(out_path, container)
+            core.ParseOrigenOut(f"{fn}.out", container)
+
 
     def compute_envelope(self, decay_hours: float, run_origen: bool = True) -> EnvelopeResult:
-        """
-        Расчёт «конверта»: дозовые кривые по всем зонам (130..149).
-        """
         if self._algorithms is None or self._greens is None:
             self.initialize()
 
@@ -140,29 +127,19 @@ class TestPlanAPI:
         else:
             self._parse_origen_without_scale(core, decay_hours)
 
-        # Дозовые ряды по зонам (в коде Test_plan они в Sv/s → переведём к µSv/h)
         dose_by_zone: Dict[int, List[float]] = {}
         for zone in range(130, 150):
             dozeRates = core.FADoseRate(core.Wenvelope_axial, zone, core.Wenvelope_src_spectrums)
-            dose_by_zone[zone] = [Svs * 3600.0 * 1e6 for Svs in dozeRates]
+            dose_by_zone[zone] = [Svs * 3600.0 * 1e6 for Svs in dozeRates]  # Sv/s → μSv/h
 
         return EnvelopeResult(times_h=core.tregs, dose_uSv_per_h_by_zone=dose_by_zone)
 
     def compute_cell(self, cell: str, decay_hours: float, run_origen: bool = True) -> CellResult:
-        """
-        Расчёт по одной ячейке ТВС.
-        Внутри Test_plan.FACellDoseRate(..) уже работает с .out/.inp через CoreHistory,
-        так что при run_origen=False будет использован парсинг готовых .out.
-        """
         if self._algorithms is None or self._greens is None:
             self.initialize()
 
         core = TestPlan.TCoreHistory(self._algorithms, self._greens)
-
-        # FACellDoseRate сам сформирует контейнеры и, если нужно, дёрнет ORIGEN
-        # но .out мы уже положили — парсер отработает.
         dose_arrays_Svs = core.FACellDoseRate(cell, decay_hours)
-
         dose_by_zone: Dict[int, List[float]] = {
             z: [Svs * 3600.0 * 1e6 for Svs in series] for z, series in dose_arrays_Svs.items()
         }

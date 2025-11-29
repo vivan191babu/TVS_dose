@@ -1,2 +1,2 @@
-__all__ = ["api", "server", "gui", "cli"]
+__all__ = ["api", "server", "cli", "gui"]
 __version__ = "0.2.0"
